@@ -1,0 +1,203 @@
+name: Backend CI/CD Pipeline (Standalone EC2 Deploy)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Code Quality & Automated Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: |
+          uv sync --frozen
+
+      - name: Check Code Formatting (Ruff)
+        run: |
+          uv run ruff format --check .
+
+      - name: Check Code Linting (Ruff)
+        run: |
+          uv run ruff check .
+
+      - name: Run Test Suite (pytest)
+        env:
+          APP_ENV: testing
+          JWT_SECRET_KEY: test_secret_key_ci_cd_secure_32_bytes_min_1234
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+          S3_ENDPOINT_URL: http://localhost:9000
+          S3_ACCESS_KEY_ID: test_key
+          S3_SECRET_ACCESS_KEY: test_secret
+          SUPABASE_URL: https://ijlfghksvuyoynshxoif.supabase.co
+          SUPABASE_KEY: dummy_anon_key_for_testing
+          SUPABASE_SERVICE_ROLE: dummy_service_key_for_testing
+          SUPABASE_BUCKET: resources
+          SUPABASE_REGION: ap-southeast-2
+          SUPABASE_WEBHOOK_SECRET: test_webhook_secret
+          EMAIL_HOST_USER: test@example.com
+          EMAIL_HOST_PASSWORD: test_password
+          MAIL_FROM: test@example.com
+        run: |
+          uv run pytest app/tests/ -v
+
+  deploy:
+    name: Deploy to AWS EC2
+    needs: ci
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          script_stop: true
+          envs: >
+            APP_NAME,
+            APP_ENV,
+            DEBUG,
+            DATABASE_URL,
+            S3_ENDPOINT_URL,
+            S3_ACCESS_KEY_ID,
+            S3_SECRET_ACCESS_KEY,
+            S3_BUCKET_NAME,
+            S3_REGION,
+            SUPABASE_URL,
+            SUPABASE_KEY,
+            SUPABASE_SERVICE_ROLE,
+            SUPABASE_BUCKET,
+            SUPABASE_REGION,
+            SUPABASE_WEBHOOK_SECRET,
+            JWT_SECRET_KEY,
+            JWT_ALGORITHM,
+            EMAIL_HOST_USER,
+            EMAIL_HOST_PASSWORD,
+            EMAIL_SERVER,
+            EMAIL_PORT,
+            EMAIL_USE_TLS,
+            MAIL_FROM,
+            MAIL_FROM_NAME,
+            FRONTEND_URL
+          script: |
+            set -euo pipefail
+            APP_DIR="/home/${USER}/app"
+
+            echo "===> Navigating to application directory..."
+            mkdir -p "${APP_DIR}"
+            cd "${APP_DIR}"
+
+            echo "===> Syncing latest repository files..."
+            if [ -d ".git" ]; then
+              git fetch origin main
+              git reset --hard origin/main
+            else
+              echo "Cloning repository..."
+              git clone https://github.com/${{ github.repository }}.git .
+            fi
+
+            echo "===> Generating production .env file..."
+            cat << 'EOF' > .env
+            APP_NAME="AMU Student Resource Management System"
+            APP_ENV="production"
+            DEBUG=false
+
+            DATABASE_URL="${DATABASE_URL}"
+
+            S3_ENDPOINT_URL="${S3_ENDPOINT_URL}"
+            S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID}"
+            S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY}"
+            S3_BUCKET_NAME="${S3_BUCKET_NAME}"
+            S3_REGION="${S3_REGION}"
+            SUPABASE_URL="${SUPABASE_URL}"
+            SUPABASE_KEY="${SUPABASE_KEY}"
+            SUPABASE_SERVICE_ROLE="${SUPABASE_SERVICE_ROLE}"
+            SUPABASE_BUCKET="${SUPABASE_BUCKET}"
+            SUPABASE_REGION="${SUPABASE_REGION}"
+            SUPABASE_WEBHOOK_SECRET="${SUPABASE_WEBHOOK_SECRET}"
+
+            JWT_SECRET_KEY="${JWT_SECRET_KEY}"
+            JWT_ALGORITHM="${JWT_ALGORITHM}"
+
+            EMAIL_HOST_USER="${EMAIL_HOST_USER}"
+            EMAIL_HOST_PASSWORD="${EMAIL_HOST_PASSWORD}"
+            EMAIL_SERVER="${EMAIL_SERVER}"
+            EMAIL_PORT="${EMAIL_PORT}"
+            EMAIL_USE_TLS="${EMAIL_USE_TLS}"
+            MAIL_FROM="${MAIL_FROM}"
+            MAIL_FROM_NAME="${MAIL_FROM_NAME}"
+            FRONTEND_URL="${FRONTEND_URL}"
+            EOF
+
+            echo "===> Executing deployment runner..."
+            chmod +x deploy/deploy.sh
+            APP_DIR="${APP_DIR}" ./deploy/deploy.sh
+        env:
+          APP_NAME: "AMU Student Resource Management System"
+          APP_ENV: "production"
+          DEBUG: "false"
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          S3_ENDPOINT_URL: ${{ secrets.S3_ENDPOINT_URL || 'https://ijlfghksvuyoynshxoif.supabase.co/storage/v1/s3' }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME || 'resources' }}
+          S3_REGION: ${{ secrets.S3_REGION || 'ap-southeast-2' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || 'https://ijlfghksvuyoynshxoif.supabase.co' }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          SUPABASE_BUCKET: ${{ secrets.SUPABASE_BUCKET || 'resources' }}
+          SUPABASE_REGION: ${{ secrets.SUPABASE_REGION || 'ap-southeast-2' }}
+          SUPABASE_WEBHOOK_SECRET: ${{ secrets.SUPABASE_WEBHOOK_SECRET }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          JWT_ALGORITHM: ${{ secrets.JWT_ALGORITHM || 'HS256' }}
+          EMAIL_HOST_USER: ${{ secrets.EMAIL_HOST_USER }}
+          EMAIL_HOST_PASSWORD: ${{ secrets.EMAIL_HOST_PASSWORD }}
+          EMAIL_SERVER: ${{ secrets.EMAIL_SERVER || 'smtp.gmail.com' }}
+          EMAIL_PORT: ${{ secrets.EMAIL_PORT || '587' }}
+          EMAIL_USE_TLS: ${{ secrets.EMAIL_USE_TLS || 'true' }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_FROM_NAME: ${{ secrets.MAIL_FROM_NAME || 'AMU Resource Management' }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL || 'http://localhost:3000' }}
+
+      - name: Output Deployment Summary
+        run: |
+          echo "### 🚀 Deployment to EC2 Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Host:** \`${{ secrets.EC2_HOST }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Health Endpoint:** \`http://${{ secrets.EC2_HOST }}:8000/healthz\`" >> $GITHUB_STEP_SUMMARY

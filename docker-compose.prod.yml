@@ -1,0 +1,45 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: amu_backend_prod
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: "AMU Student Resource Management System"
+      APP_ENV: production
+      DEBUG: "false"
+      DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_SERVER: ${POSTGRES_SERVER:-localhost}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-amu_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-amu_password_secure}
+      POSTGRES_DB: ${POSTGRES_DB:-amu_resources_db}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-https://ijlfghksvuyoynshxoif.supabase.co/storage/v1/s3}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-resources}
+      S3_REGION: ${S3_REGION:-ap-southeast-2}
+      SUPABASE_URL: ${SUPABASE_URL:-https://ijlfghksvuyoynshxoif.supabase.co}
+      SUPABASE_KEY: ${SUPABASE_KEY:-}
+      SUPABASE_SERVICE_ROLE: ${SUPABASE_SERVICE_ROLE:-}
+      SUPABASE_BUCKET: ${SUPABASE_BUCKET:-resources}
+      SUPABASE_REGION: ${SUPABASE_REGION:-ap-southeast-2}
+      SUPABASE_WEBHOOK_SECRET: ${SUPABASE_WEBHOOK_SECRET:-}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      EMAIL_SERVER: ${EMAIL_SERVER:-smtp.gmail.com}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-AMU Resource Management}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
