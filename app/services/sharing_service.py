@@ -7,12 +7,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.folder import Folder, FolderAccess
 from app.models.resource import Resource, ResourceAccess
 from app.models.user import User
+from app.repositories.folder_repository import folder_repository
 from app.repositories.resource_repository import resource_repository
 from app.repositories.sharing_repository import sharing_repository
 from app.repositories.user_repository import user_repository
-from app.schemas.sharing import PaginatedShareGrantResponse, ShareGrantRead
+from app.schemas.sharing import (
+    FolderShareGrantRead,
+    PaginatedFolderShareGrantResponse,
+    PaginatedShareGrantResponse,
+    ShareGrantRead,
+)
 from app.services.email_service import EmailService
 
 logger = logging.getLogger("amu_sharing")
@@ -64,6 +71,18 @@ class SharingService:
                 return True
             if required_permission == "EDIT" and grant.permission == "EDIT":
                 return True
+
+        # 5. Inherited access: the resource lives inside a folder (or subtree)
+        #    that has been shared with this user.
+        if resource.folder_id:
+            tree_perm = await folder_repository.get_tree_permission(
+                session, resource.folder_id, user.user_id
+            )
+            if tree_perm:
+                if required_permission == "VIEW":
+                    return True
+                if required_permission == "EDIT" and tree_perm == "EDIT":
+                    return True
 
         return False
 
@@ -268,6 +287,208 @@ class SharingService:
         )
         resources = (await session.scalars(stmt)).all()
         return list(resources)
+
+    # ------------------------------------------------------------------
+    # Folder sharing
+    # ------------------------------------------------------------------
+
+    @classmethod
+    async def can_access_folder(
+        cls,
+        session: AsyncSession,
+        user: User,
+        folder: Folder,
+        required_permission: str = "VIEW",
+    ) -> bool:
+        """Owner and admins always pass; otherwise a grant on the folder or any
+        ancestor folder confers access (EDIT grant also satisfies VIEW)."""
+        if folder.owner_id == user.user_id:
+            return True
+        if user.role and user.role.name == "Administrator":
+            return True
+
+        tree_perm = await folder_repository.get_tree_permission(
+            session, folder.folder_id, user.user_id
+        )
+        if not tree_perm:
+            return False
+        if required_permission == "VIEW":
+            return True
+        return required_permission == "EDIT" and tree_perm == "EDIT"
+
+    @classmethod
+    async def grant_folder_access(
+        cls,
+        session: AsyncSession,
+        actor: User,
+        folder_id: uuid.UUID,
+        grantee_email: str,
+        permission: str = "VIEW",
+        background_tasks: BackgroundTasks | None = None,
+    ) -> FolderAccess:
+        """Grant VIEW or EDIT access to a folder (and, by cascade, everything in
+        its subtree). Only the folder owner or an administrator may share."""
+        clean_permission = permission.upper().strip()
+        if clean_permission not in ("VIEW", "EDIT"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid permission. Must be 'VIEW' or 'EDIT'.",
+            )
+
+        folder = await folder_repository.get_by_id(session, folder_id)
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Folder not found.",
+            )
+
+        if folder.owner_id != actor.user_id and actor.role.name != "Administrator":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the folder owner or an administrator can grant access.",
+            )
+
+        grantee = await user_repository.get_by_email(session, grantee_email)
+        if not grantee:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Target user with email '{grantee_email}' was not found.",
+            )
+
+        if grantee.user_id == actor.user_id or grantee.user_id == folder.owner_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot share a folder with yourself.",
+            )
+
+        existing = await folder_repository.get_active_folder_grant(
+            session, folder_id, grantee.user_id
+        )
+        if existing:
+            existing.permission = clean_permission
+            await session.commit()
+            existing.user = grantee
+            target_grant = existing
+        else:
+            grant = FolderAccess(
+                folder_id=folder_id,
+                user_id=grantee.user_id,
+                permission=clean_permission,
+                granted_by=actor.user_id,
+            )
+            session.add(grant)
+            await session.commit()
+            grant.user = grantee
+            target_grant = grant
+
+        if background_tasks is not None:
+            background_tasks.add_task(
+                EmailService.send_share_notification_email,
+                email=grantee.email,
+                grantee_name=grantee.full_name,
+                sharer_name=actor.full_name,
+                resource_title=f"📁 {folder.name}",
+                permission=clean_permission,
+                resource_id=folder.folder_id,
+            )
+
+        return target_grant
+
+    @classmethod
+    async def revoke_folder_access(
+        cls,
+        session: AsyncSession,
+        actor: User,
+        folder_id: uuid.UUID,
+        access_id: uuid.UUID,
+    ) -> None:
+        """Revoke a folder share grant. Only the owner or an administrator may revoke."""
+        folder = await folder_repository.get_by_id(session, folder_id)
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Folder not found.",
+            )
+
+        if folder.owner_id != actor.user_id and actor.role.name != "Administrator":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the folder owner or an administrator can revoke access.",
+            )
+
+        grant = await folder_repository.get_folder_grant_by_id(session, access_id)
+        if not grant or grant.folder_id != folder_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Share grant not found for this folder.",
+            )
+
+        await session.delete(grant)
+        await session.commit()
+
+    @classmethod
+    async def list_folder_grants(
+        cls,
+        session: AsyncSession,
+        actor: User,
+        folder_id: uuid.UUID,
+        page: int = 1,
+        limit: int = 50,
+    ) -> PaginatedFolderShareGrantResponse:
+        """List active share grants on a folder with pagination (Owner/Admin only)."""
+        folder = await folder_repository.get_by_id(session, folder_id)
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Folder not found.",
+            )
+
+        if folder.owner_id != actor.user_id and actor.role.name != "Administrator":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the folder owner or an administrator can view share grants.",
+            )
+
+        grants, total = await folder_repository.list_folder_grants(
+            session, folder_id, page=page, limit=limit
+        )
+        total_pages = math.ceil(total / limit) if total > 0 else 0
+
+        items = [
+            FolderShareGrantRead(
+                access_id=g.access_id,
+                folder_id=g.folder_id,
+                user_id=g.user_id,
+                grantee_email=g.user.email if g.user else "",
+                grantee_name=g.user.full_name if g.user else "",
+                permission=g.permission,
+                granted_by=g.granted_by,
+                created_at=g.created_at,
+            )
+            for g in grants
+        ]
+
+        return PaginatedFolderShareGrantResponse(
+            items=items,
+            page=page,
+            limit=limit,
+            total=total,
+            total_pages=total_pages,
+        )
+
+    @classmethod
+    async def list_folders_shared_with_me(
+        cls,
+        session: AsyncSession,
+        user: User,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Folder]:
+        """List folders that have been explicitly shared with the current user."""
+        folders = await folder_repository.list_folders_shared_with_user(
+            session, user.user_id, limit=limit, offset=offset
+        )
+        return list(folders)
 
     @classmethod
     async def list_shared_by_me(

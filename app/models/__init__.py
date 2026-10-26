@@ -2,7 +2,7 @@
 
 from app.models.audit import AuditEvent
 from app.models.base import TimestampMixin, UUIDMixin
-from app.models.folder import Folder
+from app.models.folder import Folder, FolderAccess
 from app.models.resource import (
     AcademicYear,
     Resource,
@@ -28,6 +28,7 @@ __all__ = [
     "Department",
     "EmailOTP",
     "Folder",
+    "FolderAccess",
     "Resource",
     "ResourceAccess",
     "ResourceTag",

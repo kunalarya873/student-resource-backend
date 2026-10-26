@@ -6,7 +6,7 @@ services:
     container_name: amu_backend_prod
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       APP_NAME: "AMU Student Resource Management System"
       APP_ENV: production

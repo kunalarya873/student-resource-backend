@@ -364,6 +364,15 @@ class ResourceService:
         if grant:
             return
 
+        # Inherited access: the resource sits inside a folder (or subtree) that
+        # has been shared with this user.
+        if resource.folder_id:
+            tree_perm = await folder_repository.get_tree_permission(
+                session, resource.folder_id, user.user_id
+            )
+            if tree_perm:
+                return
+
         if resource.status == "PRIVATE" or resource.visibility == "PRIVATE":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

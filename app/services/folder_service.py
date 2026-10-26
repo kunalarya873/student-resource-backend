@@ -126,10 +126,16 @@ class FolderService:
                 detail="Folder not found",
             )
         if folder.owner_id != user.user_id and user.role.name != "Administrator":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have access to this folder",
+            # Access may still be inherited via a share grant on this folder or
+            # any of its ancestors (full folder sharing cascades down a subtree).
+            tree_perm = await folder_repository.get_tree_permission(
+                session, folder_id, user.user_id
             )
+            if not tree_perm:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have access to this folder",
+                )
         return folder
 
     @classmethod
@@ -146,6 +152,18 @@ class FolderService:
     ) -> FolderContentsResponse:
         folder = await cls.get_folder(session, user, folder_id)
         breadcrumbs = await cls.get_breadcrumbs(session, folder_id)
+
+        # A grantee should only see the breadcrumb trail from the folder that was
+        # shared with them downward — not their sharer's ancestor folder names.
+        if folder.owner_id != user.user_id and user.role.name != "Administrator":
+            shared = await folder_repository.list_folders_shared_with_user(
+                session, user.user_id, limit=1000, offset=0
+            )
+            shared_ids = {f.folder_id for f in shared}
+            for i, crumb in enumerate(breadcrumbs):
+                if crumb.folder_id in shared_ids:
+                    breadcrumbs = breadcrumbs[i:]
+                    break
 
         page = max(1, page)
         limit = max(1, min(limit, 100))

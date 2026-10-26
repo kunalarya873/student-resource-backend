@@ -40,3 +40,26 @@ class PaginatedShareGrantResponse(CoreSchema):
     limit: int = Field(default=50, description="Items per page")
     total: int = Field(default=0, description="Total count of active share grants")
     total_pages: int = Field(default=0, description="Total pages available")
+
+
+class FolderShareGrantRead(CoreSchema):
+    """Read schema representing an active folder sharing grant."""
+
+    access_id: uuid.UUID
+    folder_id: uuid.UUID
+    user_id: uuid.UUID
+    grantee_email: str
+    grantee_name: str
+    permission: str
+    granted_by: uuid.UUID
+    created_at: datetime
+
+
+class PaginatedFolderShareGrantResponse(CoreSchema):
+    """Paginated list of active folder sharing grants."""
+
+    items: list[FolderShareGrantRead]
+    page: int = Field(default=1, description="Current page number")
+    limit: int = Field(default=50, description="Items per page")
+    total: int = Field(default=0, description="Total count of active share grants")
+    total_pages: int = Field(default=0, description="Total pages available")

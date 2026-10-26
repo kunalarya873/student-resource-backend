@@ -3,8 +3,9 @@ from collections.abc import Sequence
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.folder import Folder
+from app.models.folder import Folder, FolderAccess
 from app.models.resource import Resource
 from app.repositories.base import BaseRepository
 
@@ -121,6 +122,107 @@ class FolderRepository(BaseRepository[Folder]):
         """)
         result = await session.execute(query, {"folder_id": str(folder_id)})
         return [uuid.UUID(str(r[0])) for r in result.fetchall()]
+
+    # ------------------------------------------------------------------
+    # Folder sharing (access grants cascading down the subtree)
+    # ------------------------------------------------------------------
+
+    async def get_tree_permission(
+        self,
+        session: AsyncSession,
+        folder_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> str | None:
+        """Return the effective permission a user holds on a folder via a grant
+        on the folder itself OR any of its ancestors. EDIT wins over VIEW;
+        returns None if no grant covers the folder."""
+        query = text("""
+            WITH RECURSIVE ancestors AS (
+                SELECT folder_id, parent_folder_id FROM folders WHERE folder_id = :folder_id
+                UNION ALL
+                SELECT f.folder_id, f.parent_folder_id
+                FROM folders f JOIN ancestors a ON f.folder_id = a.parent_folder_id
+            )
+            SELECT fa.permission
+            FROM folder_access fa
+            JOIN ancestors a ON fa.folder_id = a.folder_id
+            WHERE fa.user_id = :user_id;
+        """)
+        result = await session.execute(
+            query, {"folder_id": str(folder_id), "user_id": str(user_id)}
+        )
+        permissions = {str(r[0]).upper() for r in result.fetchall()}
+        if not permissions:
+            return None
+        return "EDIT" if "EDIT" in permissions else "VIEW"
+
+    async def get_active_folder_grant(
+        self,
+        session: AsyncSession,
+        folder_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> FolderAccess | None:
+        """Fetch a direct access grant for a user on a specific folder."""
+        stmt = (
+            select(FolderAccess)
+            .where(FolderAccess.folder_id == folder_id, FolderAccess.user_id == user_id)
+            .options(selectinload(FolderAccess.user))
+        )
+        return await session.scalar(stmt)
+
+    async def get_folder_grant_by_id(
+        self, session: AsyncSession, access_id: uuid.UUID
+    ) -> FolderAccess | None:
+        """Fetch a folder access grant by its primary key."""
+        return await session.get(FolderAccess, access_id)
+
+    async def list_folder_grants(
+        self,
+        session: AsyncSession,
+        folder_id: uuid.UUID,
+        *,
+        page: int = 1,
+        limit: int = 50,
+    ) -> tuple[Sequence[FolderAccess], int]:
+        """List all active access grants for a folder with pagination."""
+        count_stmt = (
+            select(func.count())
+            .select_from(FolderAccess)
+            .where(FolderAccess.folder_id == folder_id)
+        )
+        total = (await session.scalar(count_stmt)) or 0
+
+        offset = max(0, (page - 1) * limit)
+        stmt = (
+            select(FolderAccess)
+            .where(FolderAccess.folder_id == folder_id)
+            .options(selectinload(FolderAccess.user))
+            .order_by(FolderAccess.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await session.scalars(stmt)
+        return result.all(), total
+
+    async def list_folders_shared_with_user(
+        self,
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Sequence[Folder]:
+        """List folders directly shared with a user, newest grant first."""
+        stmt = (
+            select(Folder)
+            .join(FolderAccess, FolderAccess.folder_id == Folder.folder_id)
+            .where(FolderAccess.user_id == user_id)
+            .order_by(FolderAccess.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await session.scalars(stmt)
+        return result.all()
 
 
 folder_repository = FolderRepository()

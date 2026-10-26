@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
@@ -15,7 +15,13 @@ from app.schemas.folder import (
     FolderUpdate,
     PaginatedFolderResponse,
 )
+from app.schemas.sharing import (
+    FolderShareGrantRead,
+    PaginatedFolderShareGrantResponse,
+    ShareGrantCreate,
+)
 from app.services.folder_service import FolderService
+from app.services.sharing_service import SharingService
 
 router = APIRouter(prefix="/folders", tags=["Folders"])
 
@@ -73,6 +79,28 @@ async def list_folders(
         total=total,
         total_pages=total_pages,
     )
+
+
+@router.get(
+    "/shared-with-me",
+    response_model=list[FolderRead],
+    status_code=status.HTTP_200_OK,
+    summary="List folders that have been shared with the current user",
+)
+async def list_folders_shared_with_me(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[FolderRead]:
+    """Retrieves folders explicitly shared with the authenticated user (browsable subtrees)."""
+    folders = await SharingService.list_folders_shared_with_me(
+        session=session,
+        user=current_user,
+        limit=limit,
+        offset=offset,
+    )
+    return [FolderRead.model_validate(f) for f in folders]
 
 
 @router.get(
@@ -171,3 +199,82 @@ async def delete_folder(
         recursive=recursive,
     )
     return StandardMessageResponse(message="Folder deleted successfully")
+
+
+@router.post(
+    "/{folder_id}/share",
+    response_model=FolderShareGrantRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Grant VIEW or EDIT access to a folder (and its entire subtree) by email",
+)
+async def share_folder(
+    folder_id: uuid.UUID,
+    payload: ShareGrantCreate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    background_tasks: BackgroundTasks,
+) -> FolderShareGrantRead:
+    """Shares a folder and everything inside it with a target user. Owner/Admin only."""
+    grant = await SharingService.grant_folder_access(
+        session=session,
+        actor=current_user,
+        folder_id=folder_id,
+        grantee_email=payload.grantee_email,
+        permission=payload.permission,
+        background_tasks=background_tasks,
+    )
+    return FolderShareGrantRead(
+        access_id=grant.access_id,
+        folder_id=grant.folder_id,
+        user_id=grant.user_id,
+        grantee_email=grant.user.email if grant.user else payload.grantee_email,
+        grantee_name=grant.user.full_name if grant.user else "",
+        permission=grant.permission,
+        granted_by=grant.granted_by,
+        created_at=grant.created_at,
+    )
+
+
+@router.get(
+    "/{folder_id}/share",
+    response_model=PaginatedFolderShareGrantResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List all active share grants on a folder",
+)
+async def list_folder_share_grants(
+    folder_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    page: Annotated[int, Query(ge=1, description="Page number")] = 1,
+    limit: Annotated[int, Query(ge=1, le=100, description="Items per page")] = 50,
+) -> PaginatedFolderShareGrantResponse:
+    """Lists users granted access to this folder (Owner/Admin only) with pagination."""
+    return await SharingService.list_folder_grants(
+        session=session,
+        actor=current_user,
+        folder_id=folder_id,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.delete(
+    "/{folder_id}/share/{access_id}",
+    response_model=StandardMessageResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Revoke an existing folder share grant",
+)
+async def revoke_folder_share_grant(
+    folder_id: uuid.UUID,
+    access_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> StandardMessageResponse:
+    """Revokes folder access immediately. The grantee loses access to the subtree."""
+    await SharingService.revoke_folder_access(
+        session=session,
+        actor=current_user,
+        folder_id=folder_id,
+        access_id=access_id,
+    )
+    return StandardMessageResponse(message="Folder share grant revoked successfully.")
