@@ -5,7 +5,18 @@
 
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/home/ubuntu/app}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Use explicit APP_DIR if provided, otherwise default to current repo directory (or /home/ubuntu/app if it exists)
+if [ -z "${APP_DIR:-}" ]; then
+    if [ -d "/home/ubuntu/app" ] && [ -f "/home/ubuntu/app/docker-compose.prod.yml" ]; then
+        APP_DIR="/home/ubuntu/app"
+    else
+        APP_DIR="$REPO_DIR"
+    fi
+fi
+
 COMPOSE_FILE="docker-compose.prod.yml"
 HEALTHCHECK_URL="http://127.0.0.1:8000/healthz"
 MAX_HEALTH_ATTEMPTS=15
@@ -18,7 +29,7 @@ echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 echo "=============================================================================="
 
 if [ ! -d "$APP_DIR" ]; then
-    echo "❌ Error: Application directory $APP_DIR does not exist. Run ec2-setup.sh first."
+    echo "❌ Error: Application directory $APP_DIR does not exist."
     exit 1
 fi
 
