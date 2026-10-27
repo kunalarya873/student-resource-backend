@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,6 +14,8 @@ class Folder(Base, TimestampMixin):
     __table_args__ = (
         Index("idx_folders_owner_parent", "owner_id", "parent_folder_id"),
         Index("idx_folders_parent_id", "parent_folder_id"),
+        Index("idx_folders_is_public", "is_public"),
+        Index("idx_folders_share_token", "share_token", unique=True),
     )
 
     folder_id: Mapped[uuid.UUID] = mapped_column(
@@ -30,6 +32,8 @@ class Folder(Base, TimestampMixin):
         nullable=True,
     )
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    share_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
 
     # Relationships
     owner = relationship("User", back_populates="folders")

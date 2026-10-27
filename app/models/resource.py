@@ -3,6 +3,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     ForeignKey,
@@ -54,6 +55,8 @@ class Resource(Base, TimestampMixin):
         Index("idx_resources_owner_status", "owner_id", "status"),
         Index("idx_resources_title", "title"),
         Index("idx_resources_folder_id", "folder_id"),
+        Index("idx_resources_is_public", "is_public"),
+        Index("idx_resources_share_token", "share_token", unique=True),
     )
 
     resource_id: Mapped[uuid.UUID] = mapped_column(
@@ -81,6 +84,8 @@ class Resource(Base, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     visibility: Mapped[str] = mapped_column(String(30), default="PRIVATE", nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="PENDING_VALIDATION", nullable=False)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    share_token: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
 
     # Relationships
     owner = relationship("User", back_populates="resources")

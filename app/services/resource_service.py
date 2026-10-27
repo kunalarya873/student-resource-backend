@@ -644,6 +644,8 @@ class ResourceService:
             description=res.description,
             visibility=res.visibility,
             status=res.status,
+            is_public=getattr(res, "is_public", False),
+            share_token=getattr(res, "share_token", None),
             created_at=res.created_at,
             updated_at=res.updated_at,
             current_version=current_v,

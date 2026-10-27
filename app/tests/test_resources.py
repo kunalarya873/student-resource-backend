@@ -329,7 +329,9 @@ async def test_resource_pagination_query_and_sorting(async_client: AsyncClient):
     )
     assert res_sort.status_code == 200
     titles = [r["title"] for r in res_sort.json()]
-    assert titles == sorted(titles)
+    # Postgres ORDER BY title uses case-insensitive collation; mirror that here
+    # rather than Python's case-sensitive default sort.
+    assert titles == sorted(titles, key=str.lower)
 
 
 @pytest.mark.asyncio

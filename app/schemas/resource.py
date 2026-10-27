@@ -93,6 +93,8 @@ class ResourceRead(CoreSchema):
     description: str | None = None
     visibility: str
     status: str
+    is_public: bool = False
+    share_token: str | None = None
     created_at: datetime
     updated_at: datetime
     current_version: ResourceVersionRead | None = None

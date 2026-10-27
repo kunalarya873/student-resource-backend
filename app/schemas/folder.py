@@ -26,6 +26,8 @@ class FolderRead(BaseModel):
     owner_id: uuid.UUID
     parent_folder_id: uuid.UUID | None
     name: str
+    is_public: bool = False
+    share_token: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -39,6 +41,8 @@ class FolderResourceItem(BaseModel):
     description: str | None
     visibility: str
     status: str
+    is_public: bool = False
+    share_token: str | None = None
     created_at: datetime
 
 

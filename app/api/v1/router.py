@@ -4,6 +4,7 @@ from app.api.v1.admin import router as admin_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.departments import router as departments_router
 from app.api.v1.folders import router as folders_router
+from app.api.v1.public import router as public_router
 from app.api.v1.resources import router as resources_router
 from app.api.v1.search import router as search_router
 from app.api.v1.sharing import router as sharing_router
@@ -26,5 +27,6 @@ api_v1_router.include_router(storage_router)
 api_v1_router.include_router(search_router)
 api_v1_router.include_router(sharing_router)
 api_v1_router.include_router(resources_router)
+api_v1_router.include_router(public_router)
 api_v1_router.include_router(webhooks_router)
 api_v1_router.include_router(telemetry_router)

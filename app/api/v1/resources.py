@@ -8,6 +8,7 @@ from app.core.database import get_db_session
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.common import StandardMessageResponse
+from app.schemas.public_share import PublicLinkResponse, PublicLinkToggleRequest
 from app.schemas.resource import (
     ResourceCreate,
     ResourceDownloadResponse,
@@ -16,6 +17,7 @@ from app.schemas.resource import (
     ResourceVersionCreate,
     ResourceVersionRead,
 )
+from app.services.public_share_service import PublicShareService
 from app.services.resource_service import ResourceService
 
 router = APIRouter(prefix="/resources", tags=["Resources"])
@@ -260,4 +262,44 @@ async def download_resource(
         resource_id=resource_id,
         version_id=version_id,
         inline=inline,
+    )
+
+
+@router.post(
+    "/{resource_id}/public-link",
+    response_model=PublicLinkResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Enable or disable public link sharing for a resource",
+)
+async def toggle_resource_public_link(
+    resource_id: uuid.UUID,
+    payload: PublicLinkToggleRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PublicLinkResponse:
+    """Enables or disables public link access to this resource. Owner or Administrator only."""
+    return await PublicShareService.toggle_resource_public_link(
+        session=session,
+        actor=current_user,
+        resource_id=resource_id,
+        is_public=payload.is_public,
+    )
+
+
+@router.get(
+    "/{resource_id}/public-link",
+    response_model=PublicLinkResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get current public link status and URL for a resource",
+)
+async def get_resource_public_link(
+    resource_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PublicLinkResponse:
+    """Retrieves current public link status for this resource."""
+    return await PublicShareService.get_resource_public_link(
+        session=session,
+        actor=current_user,
+        resource_id=resource_id,
     )

@@ -15,12 +15,14 @@ from app.schemas.folder import (
     FolderUpdate,
     PaginatedFolderResponse,
 )
+from app.schemas.public_share import PublicLinkResponse, PublicLinkToggleRequest
 from app.schemas.sharing import (
     FolderShareGrantRead,
     PaginatedFolderShareGrantResponse,
     ShareGrantCreate,
 )
 from app.services.folder_service import FolderService
+from app.services.public_share_service import PublicShareService
 from app.services.sharing_service import SharingService
 
 router = APIRouter(prefix="/folders", tags=["Folders"])
@@ -278,3 +280,43 @@ async def revoke_folder_share_grant(
         access_id=access_id,
     )
     return StandardMessageResponse(message="Folder share grant revoked successfully.")
+
+
+@router.post(
+    "/{folder_id}/public-link",
+    response_model=PublicLinkResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Enable or disable public link sharing for a folder",
+)
+async def toggle_folder_public_link(
+    folder_id: uuid.UUID,
+    payload: PublicLinkToggleRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PublicLinkResponse:
+    """Enables or disables public link access to this folder. Owner or Administrator only."""
+    return await PublicShareService.toggle_folder_public_link(
+        session=session,
+        actor=current_user,
+        folder_id=folder_id,
+        is_public=payload.is_public,
+    )
+
+
+@router.get(
+    "/{folder_id}/public-link",
+    response_model=PublicLinkResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get current public link status and URL for a folder",
+)
+async def get_folder_public_link(
+    folder_id: uuid.UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> PublicLinkResponse:
+    """Retrieves current public link status for this folder."""
+    return await PublicShareService.get_folder_public_link(
+        session=session,
+        actor=current_user,
+        folder_id=folder_id,
+    )
